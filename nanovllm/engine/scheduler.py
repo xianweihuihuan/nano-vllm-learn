@@ -27,15 +27,22 @@ class Scheduler:
         num_seqs = 0
         num_batched_tokens = 0
         while self.waiting and num_seqs < self.max_num_seqs:
+            # 将处于waiting状态的请求加入请求列表
             seq = self.waiting[0]
+            # 不满足条件，不可以加入
             if num_batched_tokens + len(seq) > self.max_num_batched_tokens or not self.block_manager.can_allocate(seq):
                 break
             num_seqs += 1
+            # 申请空间，申请缓存
             self.block_manager.allocate(seq)
             num_batched_tokens += len(seq) - seq.num_cached_tokens
+            # 更改请求状态
             seq.status = SequenceStatus.RUNNING
+            # pop出等待队列
             self.waiting.popleft()
+            # 加入运行队列
             self.running.append(seq)
+            # 加入本批次请求列表
             scheduled_seqs.append(seq)
         if scheduled_seqs:
             return scheduled_seqs, True
@@ -43,10 +50,13 @@ class Scheduler:
         # decode
         while self.running and num_seqs < self.max_num_seqs:
             seq = self.running.popleft()
+            # 若没有空间了
             while not self.block_manager.can_append(seq):
                 if self.running:
+                    # 牺牲最右面的
                     self.preempt(self.running.pop())
                 else:
+                    # 牺牲自己
                     self.preempt(seq)
                     break
             else:
@@ -57,11 +67,13 @@ class Scheduler:
         self.running.extendleft(reversed(scheduled_seqs))
         return scheduled_seqs, False
 
+    # 显存占用慢了，资源回收
     def preempt(self, seq: Sequence):
         seq.status = SequenceStatus.WAITING
         self.block_manager.deallocate(seq)
         self.waiting.appendleft(seq)
 
+    # 更新请求状态
     def postprocess(self, seqs: list[Sequence], token_ids: list[int]) -> list[bool]:
         for seq, token_id in zip(seqs, token_ids):
             seq.append_token(token_id)

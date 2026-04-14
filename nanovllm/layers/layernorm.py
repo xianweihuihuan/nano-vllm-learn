@@ -1,7 +1,8 @@
 import torch
 from torch import nn
 
-
+# 这个类用来负责进行残差连接和层归一化
+# 因为没有了解其中原理，所以不做注释
 class RMSNorm(nn.Module):
 
     def __init__(

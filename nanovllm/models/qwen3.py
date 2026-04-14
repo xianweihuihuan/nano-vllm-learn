@@ -15,30 +15,40 @@ class Qwen3Attention(nn.Module):
 
     def __init__(
         self,
-        hidden_size: int,
-        num_heads: int,
-        num_kv_heads: int,
-        max_position: int = 4096 * 32,
-        head_dim: int | None = None,
+        hidden_size: int,# 维度数
+        num_heads: int,# Q头数
+        num_kv_heads: int,# KV头数
+        max_position: int = 4096 * 32,# 最大的位置数
+        head_dim: int | None = None,# 每个头负责的维度数
         rms_norm_eps: float = 1e-06,
         qkv_bias: bool = False,
         rope_theta: float = 10000,
         rope_scaling: tuple | None = None,
     ) -> None:
         super().__init__()
+        # 获取总共的显卡数
         tp_size = dist.get_world_size()
+        # 注意力头数
         self.total_num_heads = num_heads
         assert self.total_num_heads % tp_size == 0
+        # 每张显卡上的注意力头
         self.num_heads = self.total_num_heads // tp_size
+        # 这里使用的GQA，多个Q对应一个K和V
         self.total_num_kv_heads = num_kv_heads
         assert self.total_num_kv_heads % tp_size == 0
+        # 每张显卡负责的K和V数量
         self.num_kv_heads = self.total_num_kv_heads // tp_size
+        # 单个头的维度
         self.head_dim = head_dim or hidden_size // self.total_num_heads
+        # 每张显卡负责的Q的维度数
         self.q_size = self.num_heads * self.head_dim
+        # 每张显卡负责的K V的维度数
         self.kv_size = self.num_kv_heads * self.head_dim
+        # 公式中防止梯度爆炸除以的那个参数
         self.scaling = self.head_dim ** -0.5
         self.qkv_bias = qkv_bias
 
+        # Wq Wk Wv矩阵
         self.qkv_proj = QKVParallelLinear(
             hidden_size,
             self.head_dim,
@@ -46,11 +56,13 @@ class Qwen3Attention(nn.Module):
             self.total_num_kv_heads,
             bias=qkv_bias,
         )
+        # Wo矩阵
         self.o_proj = RowParallelLinear(
             self.total_num_heads * self.head_dim,
             hidden_size,
             bias=False,
         )
+        
         self.rotary_emb = get_rope(
             self.head_dim,
             rotary_dim=self.head_dim,
@@ -139,7 +151,9 @@ class Qwen3DecoderLayer(nn.Module):
             intermediate_size=config.intermediate_size,
             hidden_act=config.hidden_act,
         )
+        # 对输入进行层归一化
         self.input_layernorm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        # 在前馈神经网络前进行层归一化
         self.post_attention_layernorm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
 
     def forward(
@@ -148,6 +162,7 @@ class Qwen3DecoderLayer(nn.Module):
         hidden_states: torch.Tensor,
         residual: torch.Tensor | None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
+        # 进行decode的所有内容，注意力机制，前馈神经网络
         if residual is None:
             hidden_states, residual = self.input_layernorm(hidden_states), hidden_states
         else:
@@ -165,8 +180,10 @@ class Qwen3Model(nn.Module):
         config: Qwen3Config,
     ) -> None:
         super().__init__()
+        # 初始化入口矩阵
         self.embed_tokens = VocabParallelEmbedding(config.vocab_size, config.hidden_size)
-        self.layers = nn.ModuleList([Qwen3DecoderLayer(config) for _ in range(config.num_hidden_layers)])
+        self.layers = nn.ModuleList([Qwen3DecoderLayer(config) for _ in range(config.num_hidden_layers)]) # 建立多个decode_layer
+        # 最终层归一化
         self.norm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
 
     def forward(
@@ -199,6 +216,7 @@ class Qwen3ForCausalLM(nn.Module):
         self.model = Qwen3Model(config)
         self.lm_head = ParallelLMHead(config.vocab_size, config.hidden_size)
         if config.tie_word_embeddings:
+            # 开启权重绑定后，transformer的入口矩阵和出口矩阵只是互为转置的关系，所以让他们底层指向同一块显存
             self.lm_head.weight.data = self.model.embed_tokens.weight.data
 
     def forward(

@@ -44,10 +44,10 @@ class Attention(nn.Module):
 
     def __init__(
         self,
-        num_heads,
-        head_dim,
-        scale,
-        num_kv_heads,
+        num_heads, # Q的头数
+        head_dim, # 每个头负责的维度
+        scale, # 缩放因子
+        num_kv_heads, # KV的头数
     ):
         super().__init__()
         self.num_heads = num_heads
@@ -57,7 +57,8 @@ class Attention(nn.Module):
         self.k_cache = self.v_cache = torch.tensor([])
 
     def forward(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor):
-        context = get_context()
+        # 获取上下文，该上下文中有本批次请求所需要的所有信息
+        context = get_context() 
         k_cache, v_cache = self.k_cache, self.v_cache
         if k_cache.numel() and v_cache.numel():
             store_kvcache(k, v, k_cache, v_cache, context.slot_mapping)
